@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 
+from app.routes.assessments import router as assessments_router
 from app.routes.auth import router as auth_router
+from app.routes.patients import router as patients_router
 
 app = FastAPI(
     title="AyurEssence API",
@@ -23,3 +25,5 @@ def health():
 
 
 app.include_router(auth_router)
+app.include_router(patients_router)
+app.include_router(assessments_router)
