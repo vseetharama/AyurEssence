@@ -5,3 +5,9 @@ psycopg2-binary
 pydantic
 pydantic-settings
 alembic
+passlib[bcrypt]
+bcrypt<4.1
+python-jose[cryptography]
+email-validator
+pytest
+httpx2
