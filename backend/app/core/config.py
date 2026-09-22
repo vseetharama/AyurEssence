@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_name: str = "AyurEssence"
     app_version: str = "1.0.0"
-    database_url: str = "postgresql+psycopg2://ayur_user:ayur_pass@localhost:5432/ayur_essence"
+    database_url: str = "postgresql+psycopg://ayur_user:ayur_pass@localhost:5432/ayur_essence"
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
