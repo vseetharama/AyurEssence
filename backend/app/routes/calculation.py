@@ -15,7 +15,7 @@ from app.services.prakriti_service import (
 from app.services.response_service import get_assessment
 
 router = APIRouter(prefix="/api/assessments", tags=["Prakriti Calculation"])
-METHODOLOGY_NAME = "CCRAS Standardized Prakriti Assessment Scale"
+METHODOLOGY_NAME = "CCRAS PAS-Based Scoring - SDM Adapted Questionnaire"
 
 
 @router.post(

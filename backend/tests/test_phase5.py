@@ -21,6 +21,7 @@ from app.models.questionnaire import Questionnaire
 from app.models.questionnaire_version import QuestionnaireVersion
 from app.models.reference import Reference
 from app.models.user import User
+from app.services.prakriti_service import CalculationValidationError, _classify
 
 client = TestClient(app)
 EMAIL_PREFIX = "phase5-test-"
@@ -106,7 +107,13 @@ def seed_configured_methodology(option_id: str) -> str:
         "question_option_mappings": {
             option_id: {"vata": 2, "pitta": 1, "kapha": 0},
         },
-        "classification_rules": {"strategy": "highest_weighted_score"},
+        "classification_rules": {
+            "method": "ccras_pas_based",
+            "samadoshaja": {"minimum_percentage": 30, "maximum_percentage": 34, "inclusive": True},
+            "ekadoshaja": {"dominant_percentage_greater_than": 50, "margin_over_second_greater_than": 25},
+            "dwandaja": {"dominant_first": True, "equal_percentage_tie_breaker": "raw_score"},
+            "classification_source_status": "verified",
+        },
     }
     with SessionLocal() as db:
         methodology = Methodology(
@@ -212,3 +219,33 @@ def test_calculation_requires_assessment_owner_and_finalized_is_blocked(monkeypa
     assert client.post(
         f"/api/assessments/{assessment_id}/calculate", headers=doctor_headers
     ).status_code == 409
+
+
+CLASSIFICATION_RULES = {
+    "method": "ccras_pas_based",
+    "samadoshaja": {"minimum_percentage": 30, "maximum_percentage": 34, "inclusive": True},
+    "ekadoshaja": {"dominant_percentage_greater_than": 50, "margin_over_second_greater_than": 25},
+    "dwandaja": {"dominant_first": True, "equal_percentage_tie_breaker": "raw_score"},
+    "classification_source_status": "verified",
+}
+
+
+def test_classification_boundaries_and_raw_score_tie_breaker():
+    assert _classify({"vata": 60.01, "pitta": 20, "kapha": 19.99}, {"vata": 5, "pitta": 2, "kapha": 3}, CLASSIFICATION_RULES) == "EKA-DOSHAJA:VATA"
+    assert _classify({"vata": 30, "pitta": 34, "kapha": 33}, {"vata": 3, "pitta": 4, "kapha": 3}, CLASSIFICATION_RULES) == "SAMADOSHAJA"
+    assert _classify({"vata": 45, "pitta": 45, "kapha": 10}, {"vata": 4, "pitta": 5, "kapha": 1}, CLASSIFICATION_RULES) == "SANSARGAJA:PITTA+VATA"
+
+
+def test_classification_rejects_unverified_source_status():
+    rules = {**CLASSIFICATION_RULES, "classification_source_status": "published boundary table requires verification"}
+    with pytest.raises(CalculationValidationError):
+        from app.services.prakriti_service import _validate_configuration
+
+        _validate_configuration({
+            "calculation_enabled": True,
+            "vata_predictors": 27,
+            "pitta_predictors": 25,
+            "kapha_predictors": 27,
+            "question_option_mappings": {"option": {"vata": 1, "pitta": 0, "kapha": 0}},
+            "classification_rules": rules,
+        })

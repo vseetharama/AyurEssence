@@ -57,19 +57,54 @@ def _validate_configuration(configuration: dict[str, Any]) -> None:
             "Question-level methodology scoring mappings are unavailable; calculation is disabled.",
             409,
         )
-    if not isinstance(configuration.get("classification_rules"), dict):
+    classification_rules = configuration.get("classification_rules")
+    if not isinstance(classification_rules, dict):
         raise CalculationValidationError(
             "Verified methodology classification rules are unavailable; calculation is disabled.",
             409,
         )
+    if classification_rules.get("method") != "ccras_pas_based":
+        raise CalculationValidationError("Unsupported methodology classification rules.", 409)
+    if classification_rules.get("classification_source_status") != "verified":
+        raise CalculationValidationError(
+            "Published classification boundary details are not verified; calculation is disabled.",
+            409,
+        )
 
 
-def _classify(scores: dict[str, float], rules: dict[str, Any]) -> str:
-    if rules.get("strategy") != "highest_weighted_score":
-        raise CalculationValidationError("Methodology classification strategy is unsupported.", 409)
-    highest = max(scores.values())
-    winners = [name for name, value in scores.items() if value == highest]
-    return "+".join(winners) if len(winners) > 1 else winners[0]
+def _classify(
+    scores: dict[str, float],
+    raw_scores: dict[str, float],
+    rules: dict[str, Any],
+) -> str:
+    samadoshaja = rules.get("samadoshaja", {})
+    minimum = samadoshaja.get("minimum_percentage")
+    maximum = samadoshaja.get("maximum_percentage")
+    if (
+        samadoshaja.get("inclusive") is True
+        and isinstance(minimum, (int, float))
+        and isinstance(maximum, (int, float))
+        and all(minimum <= score <= maximum for score in scores.values())
+    ):
+        return "SAMADOSHAJA"
+
+    ranking = sorted(
+        scores,
+        key=lambda dosha: (scores[dosha], raw_scores[dosha]),
+        reverse=True,
+    )
+    dominant, second = ranking[:2]
+    ekadoshaja = rules.get("ekadoshaja", {})
+    dominant_threshold = ekadoshaja.get("dominant_percentage_greater_than")
+    margin_threshold = ekadoshaja.get("margin_over_second_greater_than")
+    if (
+        isinstance(dominant_threshold, (int, float))
+        and isinstance(margin_threshold, (int, float))
+        and scores[dominant] > dominant_threshold
+        and scores[dominant] - scores[second] > margin_threshold
+    ):
+        return f"EKA-DOSHAJA:{dominant.upper()}"
+    return f"SANSARGAJA:{dominant.upper()}+{second.upper()}"
 
 
 def calculate_scores(
@@ -92,7 +127,17 @@ def calculate_scores(
             )
         ).all()
     )
-    required_ids = {question.id for question in questions if question.is_required}
+    configured_question_ids = configuration.get("scoring_question_ids")
+    scoring_question_ids = (
+        set(configured_question_ids)
+        if isinstance(configured_question_ids, list) and configured_question_ids
+        else {question.id for question in questions}
+    )
+    required_ids = {
+        question.id
+        for question in questions
+        if question.is_required and question.id in scoring_question_ids
+    }
     response_by_question = {response.question_id: response for response in responses}
     if not required_ids.issubset(response_by_question):
         raise CalculationValidationError("Required questionnaire responses are missing.")
@@ -114,7 +159,10 @@ def calculate_scores(
 
     raw = {"vata": 0.0, "pitta": 0.0, "kapha": 0.0}
     mappings = configuration["question_option_mappings"]
-    for response in responses:
+    responses_to_score = [
+        response for response in responses if response.question_id in scoring_question_ids
+    ]
+    for response in responses_to_score:
         mapping = mappings.get(response.option_id or "")
         if not isinstance(mapping, dict) or any(key not in mapping for key in raw):
             raise CalculationValidationError(
@@ -135,7 +183,7 @@ def calculate_scores(
         dosha: (raw[dosha] / counts[dosha]) * (100 / 3)
         for dosha in raw
     }
-    dominant = _classify(percentages, configuration["classification_rules"])
+    dominant = _classify(percentages, raw, configuration["classification_rules"])
     return CalculatedScores(
         vata_percentage=percentages["vata"],
         pitta_percentage=percentages["pitta"],
